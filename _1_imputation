@@ -31,18 +31,48 @@ drop ovarianca uterineca endometrialca
 * Ethnicity classification *  
 tab ethnicgroupid      // 10 level category  
 
+gen ethnicity = . 
+
+* White British, White other * 
+replace ethnicity = 1 if ethnicgroupid==1 | ethnicgroupid==2 | ethnicgroupid==3
+
+* Indian * 
+replace ethnicty = 2 if ethnicgroupid==8 
+
+* Pakistani * 
+replace ethnicity = 3 if ethnicgroupid==9 
+
+* Bangladeshi * 
+replace ethnicity = 4 if ethnicgroupid==10 
+
+* Other Asian * 
+replace ethnicity = 5 if ethnicgroupid==11 
+
+* Black Caribbean * 
+replace ethnicity = 6 if ethnicgroupid==12 
+
+* Black African or other Black * 
+replace ethnicity = 7 if ethnicgroupid==13 | ethnicgroupid==14 
+
+* Chinese * 
+replace ethnicity = 8 if ethnicgroupid==15 
+
+* Other, inc. mixed race or Arab * 
+replace ethnicity = 9 if ethnicgroupid==4 | ethnicgroupid==5 | ethnicgroupid==6 | ethnicgroupid==7 | ethnicgroupid==16 
+
+
 ********************************************************************* 
 * Stset the data - estimate Nelson-Aalen cumulative hazard function * 
 *********************************************************************  
-* Tabulate events - breastcancer = incident breast cancer case *  
+* Tabulate events - status6 = incident breast cancer case *  
 * exit3status = contains all cause death (use to define competing event), 1 = died, 0 = did not die *  
 
-tab d_breastcancer  
+tab status6  
 tab exit3status 
-la de events 0 "Censored" 1 "Breast cancer" 2 "Died - competing risk" 
+la de events 0 "Censored" 1 "Incident breast cancer" 2 "Died - competing risk" 
 gen endpoint = 0  
-replace endpoint = 1 if d_breastcancer==1  
-replace endpoint = 2 if (exit3status==1 & d_breastcancer==0)  // death certificate available, but breast ca not on it 
+replace endpoint = 1 if status6==2   // 1 = prevalent, 2 = incident case 
+replace endpoint = 2 if (exit3status==1 & status6!=2) 
 la val endpoint events   
 tab endpoint  
 
@@ -58,13 +88,6 @@ stset time, failure(endpoint==1)
 sts gen nelson_aalen = na  
 summ nelson_aalen  
 
-
-********************************************************************************* 
-* Estimate jack--knife pseudo-observations for Aalen-Johansen CIF - used later * 
-********************************************************************************* 
-* Estimate Aalen-Johanssen Cumulative Incidence Function pseudo-observations *  
-stpci, at(10) gen(pseudo_varselect_crr) 
-summ pseudo_varselect_crr, det             // pseudo-obs for CIF at 10yrs, in whole cohort 
 
 ********************************************* 
 * Set up data ready for multiple imputation * 
@@ -123,7 +146,7 @@ timer list
 ************************ 
 * Save imputed dataset * 
 ************************  
-save "\\final_datasets\Endpoint_2\OX129_endpoint2_imputed_new.dta", replace  
+save "\\final_datasets\Endpoint_2\OX129_endpoint1_imputed.dta", replace  
 clear  
 
 ******************************************************************************** 
