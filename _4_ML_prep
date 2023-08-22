@@ -51,18 +51,20 @@ summ period2_pseudo, det
 
 * Generate dummy variables as more efficient than doing so in R *  
 tab ethnicity, gen(ethnic_group) 
+tab alcohol_cat, gen(alcohol_category) 
+tab recent_oestrogen, gen(recent_oestrogen_use) 
+tab recent_combined, gen(recent_cobined_use) 
 tab smoke_cat, gen(smoking_category) 
 tab past_oestrogen, gen(past_oestrogen_use)  
 tab past_combined, gen(past_combinedhrt_use)  
 
-* Keep time to event variable (_t) and status indicator in case playing in R with new techniques *  
-rename _t time_to_event 
+gen bmi = exp(ln_bmi) 
 gen status = 0  
 replace status = 1 if iecv_event==1  
 tab status   
 
 * Shrink down the dataset to keep only those vars wanted for modelling and evaluation * 
-keep patid sha1 age bmi ethnic_group* fibrocystic past_oestrogen_use* past_combinedhrt_use* fh_breastca smoking_category* ihd  / 
+keep patid sha1 age bmi ethnic_group* fibrocystic recent_oestrogen_use* recent_combined_use* past_oestrogen_use* past_combinedhrt_use* fh_breastca smoking_category* ihd  / 
 vasculitis ssri period pseudo period1_pseudo period2_pseudo imputation time_to_event status     
 
 * Save this as an R-ready dataset (to be imported from .dta type) * 
