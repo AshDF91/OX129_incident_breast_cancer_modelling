@@ -1,0 +1,268 @@
+## Load in packages needed ##
+library(survival)
+library(readr)
+library(stringr) 
+library(haven)
+library(ParBayesianOptimization)
+library(xgboost) 
+
+## Load in data ##
+#setwd("//data/")
+data <- read_dta("//data/final_datasets/ML/OX129_endpoint1_stacked5_pseudovalues.dta")
+str(data)
+
+## Categorical variables were converted into dummies where needed in Stata ##
+## Here, declare as 'numeric', so can be coalesced into xgb matrix ##
+data$vasculitis              <- as.numeric(data$vasculitis)
+data$psychosis               <- as.numeric(data$psychosis) 
+data$endometriosis           <- as.numeric(data$endometriosis) 
+data$ssri                    <- as.numeric(data$ssri)
+data$ihd                     <- as.numeric(data$ihd)
+data$lungca                  <- as.numeric(data$lungca)
+data$bloodca                 <- as.numeric(data$bloodca) 
+data$thyroidca               <- as.numeric(data$thyroidca) 
+data$fibrocystic             <- as.numeric(data$fibrocystic) 
+data$pcos                    <- as.numeric(data$pcos)
+data$hysterectomy            <- as.numeric(data$hysterectomy) 
+data$previous_gynae_cancer   <- as.numeric(data$previous_gynae_cancer) 
+data$ocp                     <- as.numeric(data$ocp) 
+data$type1dm                 <- as.numeric(data$type1dm) 
+data$type2dm                 <- as.numeric(data$type2dm) 
+data$fh_breastca             <- as.numeric(data$fh_breastca) 
+data$smoking_category1       <- as.numeric(data$smoking_category1)
+data$smoking_category2       <- as.numeric(data$smoking_category2)
+data$smoking_category3       <- as.numeric(data$smoking_category3)
+data$smoking_category4       <- as.numeric(data$smoking_category4)
+data$smoking_category5       <- as.numeric(data$smoking_category5)
+data$past_oestrogen_use1     <- as.numeric(data$past_oestrogen_use1)
+data$past_oestrogen_use2     <- as.numeric(data$past_oestrogen_use2)
+data$past_oestrogen_use3     <- as.numeric(data$past_oestrogen_use3)
+data$past_oestrogen_use4     <- as.numeric(data$past_oestrogen_use4)
+data$past_oestrogen_use5     <- as.numeric(data$past_oestrogen_use5)
+data$past_oestrogen_use6     <- as.numeric(data$past_oestrogen_use6)
+data$past_combinedhrt_use1   <- as.numeric(data$past_combinedhrt_use1)
+data$past_combinedhrt_use2   <- as.numeric(data$past_combinedhrt_use2)
+data$past_combinedhrt_use3   <- as.numeric(data$past_combinedhrt_use3)
+data$past_combinedhrt_use4   <- as.numeric(data$past_combinedhrt_use4)
+data$past_combinedhrt_use5   <- as.numeric(data$past_combinedhrt_use5)
+data$past_combinedhrt_use6   <- as.numeric(data$past_combinedhrt_use6)
+data$recent_oestrogen_use1     <- as.numeric(data$recent_oestrogen_use1)
+data$recent_oestrogen_use2     <- as.numeric(data$recent_oestrogen_use2)
+data$recent_oestrogen_use3     <- as.numeric(data$recent_oestrogen_use3)
+data$recent_oestrogen_use4     <- as.numeric(data$recent_oestrogen_use4)
+data$recent_oestrogen_use5     <- as.numeric(data$recent_oestrogen_use5)
+data$recent_oestrogen_use6     <- as.numeric(data$recent_oestrogen_use6)
+data$recent_combinedhrt_use1   <- as.numeric(data$recent_combinedhrt_use1)
+data$recent_combinedhrt_use2   <- as.numeric(data$recent_combinedhrt_use2)
+data$recent_combinedhrt_use3   <- as.numeric(data$recent_combinedhrt_use3)
+data$recent_combinedhrt_use4   <- as.numeric(data$recent_combinedhrt_use4)
+data$recent_combinedhrt_use5   <- as.numeric(data$recent_combinedhrt_use5)
+data$recent_combinedhrt_use6   <- as.numeric(data$recent_combinedhrt_use6)
+
+## Set up the predictors and outcome ##
+## Set up X columns (predictors), and Y column (time to event) for XGBoost algorithm to handle ##
+x_cols <- c('age', 'bmi', 'town_int', 'fibrocystic', 'endometriosis', 'pcos', 'hysterectomy', 'previous_gynae_cancer', 
+            'ocp', 'smoking_category1', 'smoking_category2', 
+            'smoking_category3', 'smoking_category4', 'smoking_category5',
+            'past_oestrogen_use1', 'past_oestrogen_use2', 'past_oestrogen_use3', 
+            'past_oestrogen_use4', 'past_oestrogen_use5', 'past_oestrogen_use6', 
+            'past_combinedhrt_use1', 'past_combinedhrt_use2', 'past_combinedhrt_use3', 
+            'past_combinedhrt_use4', 'past_combinedhrt_use5', 'past_combinedhrt_use6', 
+            'recent_oestrogen_use1', 'recent_oestrogen_use2', 'past_oestrogen_use3', 
+            'past_oestrogen_use4', 'past_oestrogen_use5', 'past_oestrogen_use6', 
+            'past_combinedhrt_use1', 'past_combinedhrt_use2', 'past_combinedhrt_use3', 
+            'past_combinedhrt_use4', 'past_combinedhrt_use5', 'past_combinedhrt_use6',
+            'alcohol_category1', 'alcohol_category2', 'alcohol_category3', 'alcohol_category4', 
+            'alcohol_category5', 'alcohol_category6', 'type1dm, 'type2dm', 'vasculitis', 
+            'psychosis', 'anti_psychotic')
+
+y_cols <- c('pseudo')
+
+
+## Change dataset to a matrix  ##
+## x_train = predictor parameters ##
+x_train <- as.matrix(data[, x_cols])
+
+## Labels = the target for the XGBoost model - the pseudovalues ##
+label_train <- as.matrix(data[, y_cols])
+
+# Remove original data file for saving memory space #
+# Only the x_train, label_train and weights matrices are needed # 
+# First, keep the patids so we can save the individual predictions # 
+patid <- as.data.frame(data$patid)
+rm(data) 
+
+
+## Fit full model to entire available dataset - this is the model 
+## that will be evaluated using IECV ## 
+## We will run cross-validation for hyperparameter tuning ##
+
+set.seed(1066)
+
+## Bayesian optimsation package requires you to first: specify the function 
+## one seeks to optimimse. Here, it is to find the optimal hyperparameters for the 
+## model, so that the root mean squared error is minimised ##
+
+## Here, we set up this 'scoring function' so that we find the best values of max_depth, 
+## eta, and number of boosting rounds, etc.  #
+## In order to assess the performance of each combination, 5-fold cross-validation is used.
+## 5-fold CV used to estimates the 'average' performance, so the smallest value of the rmse desired
+## if found from the evaluation log, and these values used ##
+
+## Due to issues with xgboost inbuilt cross-validation function when using this very large
+## dataset with GPU, we code this by hand ##
+
+
+scorefunction <- function(max_depth, eta, subsample, number, alpha, gamma, 
+                          lambda, colsampletree, colsamplelevel) {
+  
+  set.seed(1066)
+  
+  k <- 5                                                          ## 5-fold cross-validation 
+  indices <- sample(1:nrow(x_train))                              ## Used to randomly assign to folds 
+  folds <- cut(1:length(indices), breaks = k, labels = FALSE)     ## folds 
+  
+  cv_score <- c()                                                 ## empty list to store 'scores' over each CV iteration 
+  
+  for (a in 1:k) {                                                ## Nested loop to perform CV
+    
+    cv_val_indices     <- which(folds==a)                         ## validation set 1/5 folds 
+    cv_val_data        <- x_train[cv_val_indices, ]               ## Take from x_train 
+    cv_val_labels      <- label_train[cv_val_indices]             ## Take from labels 
+    
+    cv_train_data      <- x_train[-cv_val_indices, ]              ## Train data = 4/5 folds
+    cv_train_labels    <- label_train[-cv_val_indices]            ## Train labels 4/5 
+    
+    cv_train <- xgb.DMatrix(data=cv_train_data, label=cv_train_labels) 
+    cv_val   <- xgb.DMatrix(data=cv_val_data, label=cv_val_labels)
+  
+    pars <- list(
+    tree_method = "gpu_hist", 
+    sampling_method = "gradient_based", 
+    objective = "reg:squarederror", 
+    eval_metric = "rmse", 
+    maximize = FALSE, 
+    max_depth = max_depth, 
+    eta = eta, 
+    subsample = subsample, 
+    alpha = alpha, 
+    gamma = gamma, 
+    lambda = lambda, 
+    colsample_bytree = colsampletree, 
+    colsample_bylevel = colsamplelevel
+  )
+  
+    xgboost_cv <- xgb.train(data = cv_train, param = pars, 
+                            nrounds = number, verbose = 2)         ##Fit model to 4/5 data
+    
+    cv_predictions <- predict(xgboost_cv, cv_val)                  ## Estimate predictions on held-out fold
+    
+    # Estimate performance - RMSE of predicted vs. observed pseudovalues in validation fold
+    negative_rmse <- -1*sqrt((mean((cv_predictions-cv_val_labels)^2)))
+    
+    # Pass these RMSE results to the cv_score, so they can be handed to the BO package 
+    cv_score <- c(cv_score, negative_rmse)
+    
+    ## Clear out the model at the end of loop ##
+    rm(xgboost_cv)  
+  }
+  ## BO needs score to be returned to it ##
+  return(list(Score = mean(cv_score)))
+}
+
+## Once scoring function set up, need to define the hyperparameter search space #
+
+bounds <- list(
+  max_depth = c(1L, 6L), 
+  eta = c(0.0001, 0.1), 
+  subsample = c(0.1, 0.8),                     ## prev. tried upper limit of 0.3
+  number = c(1L, 500L), 
+  alpha = c(0L, 20L), 
+  gamma = c(0L, 20L), 
+  lambda = c(0L, 20L), 
+  colsampletree = c(0.1, 0.8), 
+  colsamplelevel = c(0.1, 0.8)
+)
+
+start <- Sys.time() 
+
+bayesian_boost <- bayesOpt(
+  FUN = scorefunction, 
+  bounds = bounds, 
+  initPoints = 25, 
+  iters.n = 25,
+  iters.k = 1, 
+  parallel = FALSE, 
+  verbose = 2, 
+  acq = "ei", 
+  plotProgress = FALSE
+)
+
+end <- Sys.time() 
+end-start 
+
+plot(bayesian_boost) 
+
+## Evaluate the output of the Bayesian Optimisation process ## 
+# Extract the best hyperparameters combination found #
+
+bayesian_boost$scoreSummary 
+bestpars <- getBestPars(bayesian_boost)
+bestpars 
+
+# Store these best values to plug into a model fitted to the full development data #
+opt_maxdepth        = bestpars[1]
+opt_eta             = bestpars[2]
+opt_subsamp         = bestpars[3]
+opt_number          = bestpars[4]
+opt_alpha           = bestpars[5]
+opt_gamma           = bestpars[6]
+opt_lambda          = bestpars[7]
+opt_colsampletree   = bestpars[8]
+opt_colsamplelevel  = bestpars[9] 
+
+
+# set these as the parameters for the model # 
+
+parameters <- list(tree_method = "gpu_hist", 
+                   sampling_method = "gradient_based", 
+                   objective = "reg:squarederror", 
+                   eval_metric = "rmse", 
+                   maximize = FALSE, 
+                   max_depth = opt_maxdepth, 
+                   eta = opt_eta, 
+                   subsample = opt_subsamp, 
+                   alpha = opt_alpha, 
+                   gamma = opt_gamma, 
+                   lambda = opt_lambda, 
+                   colsample_bytree = opt_colsampletree, 
+                   colsample_bylevel = opt_colsamplelevel
+                   )
+
+dtrain <- xgb.DMatrix(data=x_train, label=label_train) 
+
+xgboost_model_endpoint1 <- xgb.train(data = dtrain, param = parameters, 
+                             nrounds = opt_number$number, verbose =2)
+
+setwd("//models/Endpoint_1/")
+xgb.save(xgboost_model_endpoint1, fname = "xgboost_model_endpoint1")
+
+full_model_predictions <- predict(xgboost_model_endpoint1, dtrain)
+summary(full_model_predictions) 
+
+
+importance.matrix <- xgb.importance(colnames(x_train), model=xgboost_model_endpoint1)
+xgb.plot.importance(importance.matrix, rel_to_first=TRUE, xlab="Relative predictor importance", col="darkblue", cex=0.3)
+
+importance.matrix <- xgb.importance(colnames(x_train), model=xgboost_model_endpoint1)
+xgb.plot.importance(importance.matrix, rel_to_first=TRUE, xlab="Relative predictor importance", col="darkblue", cex=0.8, top_n=10)
+
+table <- importance.matrix 
+table 
+
+# Clear out the environment before moving to next step, or have separate Markdown files # 
+rm(list=ls())
+
+#################################################################################################
+#################################################################################################
+
